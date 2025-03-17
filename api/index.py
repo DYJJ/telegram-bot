@@ -56,6 +56,7 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 async def handle_update(update_data):
     update = Update.de_json(update_data, application.bot)
     await application.process_update(update)
+    return {"status": "success"}
 
 # Serverless函数入口点
 class handler(BaseHTTPRequestHandler):
@@ -70,16 +71,25 @@ class handler(BaseHTTPRequestHandler):
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
         
+        # 记录收到的请求数据，用于调试
+        print(f"收到POST请求：{post_data.decode('utf-8')}")
+        
+        # 设置响应头
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
         self.end_headers()
         
-        if self.path == '/api/webhook':
-            try:
-                update_data = json.loads(post_data.decode('utf-8'))
-                asyncio.run(handle_update(update_data))
-                self.wfile.write(json.dumps({"status": "success"}).encode())
-            except Exception as e:
-                self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode())
-        else:
-            self.wfile.write(json.dumps({"status": "error", "message": "Invalid endpoint"}).encode()) 
+        try:
+            # 尝试解析JSON数据
+            update_data = json.loads(post_data.decode('utf-8'))
+            
+            # 交给异步函数处理
+            result = asyncio.run(handle_update(update_data))
+            
+            # 返回成功响应
+            self.wfile.write(json.dumps({"status": "success"}).encode())
+        except Exception as e:
+            # 记录并返回错误
+            error_message = f"处理请求时出错: {str(e)}"
+            print(error_message)
+            self.wfile.write(json.dumps({"status": "error", "message": error_message}).encode()) 
