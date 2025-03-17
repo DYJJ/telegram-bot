@@ -493,23 +493,28 @@ def handle_sticker_message(chat_id, sticker, message):
         # 获取贴纸文件信息
         file_id = sticker.get("file_id")
         if not file_id:
-            edit_message(chat_id, processing_msg_id, "无法获取表情包文件ID")
+            edit_message(chat_id, processing_msg_id, "无法获取表情包文件ID，请重试")
             return {"status": "error", "message": "No file_id in sticker"}
         
         # 获取文件信息
         file_info = get_file_info(file_id)
         if not file_info.get("ok"):
-            edit_message(chat_id, processing_msg_id, "获取文件信息失败")
+            edit_message(chat_id, processing_msg_id, "获取文件信息失败，请重试")
             return {"status": "error", "message": "Failed to get file info"}
         
         file_path = file_info.get("result", {}).get("file_path")
         if not file_path:
-            edit_message(chat_id, processing_msg_id, "无法获取文件路径")
+            edit_message(chat_id, processing_msg_id, "无法获取文件路径，请重试")
             return {"status": "error", "message": "No file_path in file info"}
         
         # 下载文件到临时目录
-        local_file_path = download_file(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}")
-        temp_files.append(local_file_path)
+        try:
+            local_file_path = download_file(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}")
+            temp_files.append(local_file_path)
+            edit_message(chat_id, processing_msg_id, "文件已下载，正在转换...")
+        except Exception as e:
+            edit_message(chat_id, processing_msg_id, f"下载文件失败: {str(e)}")
+            return {"status": "error", "message": f"Failed to download file: {str(e)}"}
         
         try:
             # 确定文件类型和输出格式
@@ -527,13 +532,22 @@ def handle_sticker_message(chat_id, sticker, message):
             # 转换文件
             success = False
             if input_extension == "webp":
-                subprocess.run(["ffmpeg", "-y", "-i", local_file_path, output_temp.name], check=True)
-                success = True
+                try:
+                    subprocess.run(["ffmpeg", "-y", "-i", local_file_path, output_temp.name], check=True, capture_output=True)
+                    success = True
+                except subprocess.CalledProcessError as e:
+                    print(f"WEBP 转换失败: {e.stderr.decode('utf-8', errors='ignore')}")
+                    edit_message(chat_id, processing_msg_id, "WEBP 转换失败，请重试")
             elif input_extension == "tgs":
+                edit_message(chat_id, processing_msg_id, "正在转换 TGS 文件...")
                 success = convert_tgs_to_gif(local_file_path, output_temp.name)
             else:
-                subprocess.run(["ffmpeg", "-y", "-i", local_file_path, "-vf", "scale=-1:-1", "-r", "20", output_temp.name], check=True)
-                success = True
+                try:
+                    subprocess.run(["ffmpeg", "-y", "-i", local_file_path, "-vf", "scale=-1:-1", "-r", "20", output_temp.name], check=True, capture_output=True)
+                    success = True
+                except subprocess.CalledProcessError as e:
+                    print(f"其他格式转换失败: {e.stderr.decode('utf-8', errors='ignore')}")
+                    edit_message(chat_id, processing_msg_id, "文件转换失败，请重试")
             
             if success:
                 # 发送转换后的文件
@@ -549,7 +563,7 @@ def handle_sticker_message(chat_id, sticker, message):
                 
                 edit_message(chat_id, processing_msg_id, response)
             else:
-                edit_message(chat_id, processing_msg_id, "转换失败，请稍后重试。")
+                edit_message(chat_id, processing_msg_id, "转换失败，请稍后重试。如果问题持续存在，请联系管理员。")
             
         finally:
             # 清理所有临时文件
@@ -557,13 +571,14 @@ def handle_sticker_message(chat_id, sticker, message):
                 try:
                     if os.path.exists(temp_file):
                         os.unlink(temp_file)
-                except:
-                    pass
+                except Exception as e:
+                    print(f"清理临时文件失败: {str(e)}")
         
-        return {"status": "success"}
+        return {"status": "success" if success else "error"}
         
     except Exception as e:
         error_msg = f"处理表情包时发生错误: {str(e)}"
+        print(error_msg)
         edit_message(chat_id, processing_msg_id, error_msg)
         
         # 确保在发生错误时也清理临时文件
@@ -571,8 +586,8 @@ def handle_sticker_message(chat_id, sticker, message):
             try:
                 if os.path.exists(temp_file):
                     os.unlink(temp_file)
-            except:
-                pass
+            except Exception as e:
+                print(f"清理临时文件失败: {str(e)}")
         
         return {"status": "error", "message": error_msg}
 
@@ -766,67 +781,84 @@ def get_sticker_set(name):
 
 def convert_tgs_to_gif(input_path, output_path):
     """将 TGS 文件转换为 GIF"""
+    temp_files = []
     try:
         # 1. 解压缩 TGS 文件（TGS 是 gzip 压缩的 JSON）
-        with gzip.open(input_path, 'rb') as f:
-            json_data = f.read()
+        try:
+            with gzip.open(input_path, 'rb') as f:
+                json_data = f.read()
+        except Exception as e:
+            print(f"TGS 解压缩失败: {str(e)}")
+            return False
         
         # 2. 保存解压后的 JSON 到临时文件
         json_temp = tempfile.NamedTemporaryFile(suffix='.json', delete=False)
         json_temp.write(json_data)
         json_temp.close()
+        temp_files.append(json_temp.name)
         
-        try:
-            # 3. 使用 ImageMagick 转换为 GIF
-            # 首先尝试使用 lottie-convert.py（如果可用）
-            try:
-                subprocess.run([
-                    'lottie_convert.py',
-                    json_temp.name,
-                    output_path
-                ], check=True)
-                os.unlink(json_temp.name)
-                return True
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                # 如果 lottie-convert.py 失败，尝试使用 ImageMagick
-                subprocess.run([
+        # 3. 尝试多种转换方法
+        conversion_methods = [
+            # 方法1: lottie-convert.py
+            {
+                'name': 'lottie-convert',
+                'cmd': ['lottie_convert.py', json_temp.name, output_path]
+            },
+            # 方法2: ImageMagick
+            {
+                'name': 'imagemagick',
+                'cmd': [
                     'convert',
-                    '-delay', '3',  # 每帧延迟 3/100 秒
-                    '-loop', '0',   # 无限循环
-                    '-dispose', 'Background',  # 处理透明背景
-                    '-layers', 'optimize',     # 优化 GIF
+                    '-delay', '3',
+                    '-loop', '0',
+                    '-dispose', 'Background',
+                    '-layers', 'optimize',
+                    '-resize', '512x512>',
                     json_temp.name,
                     output_path
-                ], check=True)
-                os.unlink(json_temp.name)
-                return True
-                
-        except subprocess.CalledProcessError as e:
-            print(f"转换失败，尝试使用 ffmpeg: {str(e)}")
-            # 如果 ImageMagick 也失败，尝试使用 ffmpeg
-            try:
-                subprocess.run([
+                ]
+            },
+            # 方法3: ffmpeg
+            {
+                'name': 'ffmpeg',
+                'cmd': [
                     'ffmpeg', '-y',
                     '-i', input_path,
-                    '-vf', 'scale=200:200:force_original_aspect_ratio=decrease,pad=200:200:(ow-iw)/2:(oh-ih)/2:color=white@0.0',
+                    '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=white@0.0',
                     '-r', '30',
                     output_path
-                ], check=True)
+                ]
+            }
+        ]
+        
+        for method in conversion_methods:
+            try:
+                print(f"尝试使用 {method['name']} 进行转换...")
+                subprocess.run(method['cmd'], check=True, capture_output=True)
+                print(f"{method['name']} 转换成功")
                 return True
             except subprocess.CalledProcessError as e:
-                print(f"ffmpeg 转换也失败了: {str(e)}")
-                return False
+                print(f"{method['name']} 转换失败: {str(e)}")
+                print(f"错误输出: {e.stderr.decode('utf-8', errors='ignore')}")
+                continue
+            except Exception as e:
+                print(f"{method['name']} 发生未知错误: {str(e)}")
+                continue
+        
+        print("所有转换方法都失败了")
+        return False
             
     except Exception as e:
-        print(f"TGS 转换失败: {str(e)}")
+        print(f"TGS 转换过程中发生错误: {str(e)}")
         return False
     finally:
-        # 确保清理临时文件
-        try:
-            if 'json_temp' in locals():
-                os.unlink(json_temp.name)
-        except:
-            pass
+        # 清理所有临时文件
+        for temp_file in temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.unlink(temp_file)
+            except Exception as e:
+                print(f"清理临时文件失败: {str(e)}")
 
 # 处理表情包（贴纸）消息
 async def sticker_handler(update: Update, context: CallbackContext) -> None:
