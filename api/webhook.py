@@ -7,6 +7,8 @@ import urllib.parse
 import uuid
 import gzip
 import subprocess
+import tempfile
+import io
 from telegram import Update
 from telegram.ext import CallbackContext
 
@@ -484,6 +486,9 @@ def handle_sticker_message(chat_id, sticker, message):
     processing_msg = send_telegram_message(chat_id, "正在处理表情包...")
     processing_msg_id = processing_msg.get("result", {}).get("message_id")
     
+    # 用于存储临时文件路径的列表
+    temp_files = []
+    
     try:
         # 获取贴纸文件信息
         file_id = sticker.get("file_id")
@@ -502,8 +507,9 @@ def handle_sticker_message(chat_id, sticker, message):
             edit_message(chat_id, processing_msg_id, "无法获取文件路径")
             return {"status": "error", "message": "No file_path in file info"}
         
-        # 下载文件
+        # 下载文件到临时目录
         local_file_path = download_file(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}")
+        temp_files.append(local_file_path)
         
         try:
             # 确定文件类型和输出格式
@@ -513,22 +519,25 @@ def handle_sticker_message(chat_id, sticker, message):
             else:  # tgs 或其他格式
                 output_format = "gif"
             
-            output_path = f"storage/tmp/convert_{uuid.uuid4().hex}.{output_format}"
+            # 创建临时输出文件
+            output_temp = tempfile.NamedTemporaryFile(suffix=f'.{output_format}', delete=False)
+            output_temp.close()
+            temp_files.append(output_temp.name)
             
             # 转换文件
             success = False
             if input_extension == "webp":
-                subprocess.run(["ffmpeg", "-y", "-i", local_file_path, output_path], check=True)
+                subprocess.run(["ffmpeg", "-y", "-i", local_file_path, output_temp.name], check=True)
                 success = True
             elif input_extension == "tgs":
-                success = convert_tgs_to_gif(local_file_path, output_path)
+                success = convert_tgs_to_gif(local_file_path, output_temp.name)
             else:
-                subprocess.run(["ffmpeg", "-y", "-i", local_file_path, "-vf", "scale=-1:-1", "-r", "20", output_path], check=True)
+                subprocess.run(["ffmpeg", "-y", "-i", local_file_path, "-vf", "scale=-1:-1", "-r", "20", output_temp.name], check=True)
                 success = True
             
             if success:
                 # 发送转换后的文件
-                send_document(chat_id, output_path, reply_to_message_id=message_id)
+                send_document(chat_id, output_temp.name, reply_to_message_id=message_id)
                 
                 # 添加下载整套表情包的选项
                 set_name = sticker.get("set_name")
@@ -543,16 +552,28 @@ def handle_sticker_message(chat_id, sticker, message):
                 edit_message(chat_id, processing_msg_id, "转换失败，请稍后重试。")
             
         finally:
-            # 清理临时文件
-            cleanup_files(local_file_path)
-            if 'output_path' in locals() and os.path.exists(output_path):
-                cleanup_files(output_path)
+            # 清理所有临时文件
+            for temp_file in temp_files:
+                try:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
+                except:
+                    pass
         
         return {"status": "success"}
         
     except Exception as e:
         error_msg = f"处理表情包时发生错误: {str(e)}"
         edit_message(chat_id, processing_msg_id, error_msg)
+        
+        # 确保在发生错误时也清理临时文件
+        for temp_file in temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.unlink(temp_file)
+            except:
+                pass
+        
         return {"status": "error", "message": error_msg}
 
 # 获取文件信息
@@ -564,22 +585,17 @@ def get_file_info(file_id):
 
 # 下载文件
 def download_file(url):
-    # 创建临时目录
-    os.makedirs("storage/tmp", exist_ok=True)
-    
-    # 生成随机文件名
-    file_path = f"storage/tmp/upload_{uuid.uuid4().hex}"
-    
-    # 下载文件
+    """下载文件到临时目录"""
     response = requests.get(url, timeout=60)
     if response.status_code != 200:
         raise Exception(f"下载失败，状态码：{response.status_code}")
     
-    # 保存文件
-    with open(file_path, 'wb') as f:
-        f.write(response.content)
+    # 使用临时文件
+    temp_file = tempfile.NamedTemporaryFile(delete=False)
+    temp_file.write(response.content)
+    temp_file.close()
     
-    return file_path
+    return temp_file.name
 
 # 转换表情包
 def convert_sticker(input_path, output_path, input_extension):
@@ -755,10 +771,10 @@ def convert_tgs_to_gif(input_path, output_path):
         with gzip.open(input_path, 'rb') as f:
             json_data = f.read()
         
-        # 2. 保存解压后的 JSON 文件
-        json_path = input_path + '.json'
-        with open(json_path, 'wb') as f:
-            f.write(json_data)
+        # 2. 保存解压后的 JSON 到临时文件
+        json_temp = tempfile.NamedTemporaryFile(suffix='.json', delete=False)
+        json_temp.write(json_data)
+        json_temp.close()
         
         try:
             # 3. 使用 ImageMagick 转换为 GIF
@@ -766,10 +782,10 @@ def convert_tgs_to_gif(input_path, output_path):
             try:
                 subprocess.run([
                     'lottie_convert.py',
-                    json_path,
+                    json_temp.name,
                     output_path
                 ], check=True)
-                os.remove(json_path)
+                os.unlink(json_temp.name)
                 return True
             except (subprocess.CalledProcessError, FileNotFoundError):
                 # 如果 lottie-convert.py 失败，尝试使用 ImageMagick
@@ -779,10 +795,10 @@ def convert_tgs_to_gif(input_path, output_path):
                     '-loop', '0',   # 无限循环
                     '-dispose', 'Background',  # 处理透明背景
                     '-layers', 'optimize',     # 优化 GIF
-                    json_path,
+                    json_temp.name,
                     output_path
                 ], check=True)
-                os.remove(json_path)
+                os.unlink(json_temp.name)
                 return True
                 
         except subprocess.CalledProcessError as e:
@@ -804,6 +820,13 @@ def convert_tgs_to_gif(input_path, output_path):
     except Exception as e:
         print(f"TGS 转换失败: {str(e)}")
         return False
+    finally:
+        # 确保清理临时文件
+        try:
+            if 'json_temp' in locals():
+                os.unlink(json_temp.name)
+        except:
+            pass
 
 # 处理表情包（贴纸）消息
 async def sticker_handler(update: Update, context: CallbackContext) -> None:
