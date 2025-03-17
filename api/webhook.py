@@ -1,28 +1,10 @@
 from http.server import BaseHTTPRequestHandler
 import json
 import os
-from telegram import Bot
+import requests
 
 # 从环境变量获取Token
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "7707884696:AAHeEq7AgFQkVMY9X8ShxytIW_AsCRHPEmA")
-
-# 设置Webhook的处理函数
-async def set_webhook(request):
-    bot = Bot(token=TOKEN)
-    webhook_url = f"https://{request.headers.get('host')}/api/webhook"
-    
-    success = await bot.set_webhook(url=webhook_url)
-    
-    if success:
-        return {
-            "statusCode": 200,
-            "body": json.dumps({"status": "success", "message": f"Webhook set to {webhook_url}"})
-        }
-    else:
-        return {
-            "statusCode": 500,
-            "body": json.dumps({"status": "error", "message": "Failed to set webhook"})
-        }
 
 # Vercel Serverless函数
 class handler(BaseHTTPRequestHandler):
@@ -31,10 +13,25 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'application/json')
         self.end_headers()
         
-        from telegram import Bot
-        import asyncio
+        # 获取当前域名
+        host = self.headers.get('host')
+        webhook_url = f"https://{host}/api/webhook"
         
-        # 使用asyncio运行协程
-        result = asyncio.run(set_webhook(self))
+        # 直接使用requests设置webhook（更简单可靠）
+        set_webhook_url = f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={webhook_url}"
         
-        self.wfile.write(result["body"].encode()) 
+        try:
+            response = requests.get(set_webhook_url)
+            result = {
+                "status": "success" if response.status_code == 200 else "error",
+                "message": f"Webhook设置结果: {response.text}",
+                "webhook_url": webhook_url
+            }
+        except Exception as e:
+            result = {
+                "status": "error",
+                "message": f"设置Webhook时出错: {str(e)}",
+                "webhook_url": webhook_url
+            }
+        
+        self.wfile.write(json.dumps(result).encode()) 
