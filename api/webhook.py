@@ -5,6 +5,10 @@ import requests
 import re
 import urllib.parse
 import uuid
+import gzip
+import subprocess
+from telegram import Update
+from telegram.ext import CallbackContext
 
 # 从环境变量获取Token
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "7707884696:AAHeEq7AgFQkVMY9X8ShxytIW_AsCRHPEmA")
@@ -498,25 +502,54 @@ def handle_sticker_message(chat_id, sticker, message):
             edit_message(chat_id, processing_msg_id, "无法获取文件路径")
             return {"status": "error", "message": "No file_path in file info"}
         
-        # 创建文件URL
-        download_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+        # 下载文件
+        local_file_path = download_file(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}")
         
-        # 确定文件类型和说明
-        input_extension = os.path.splitext(file_path)[1].lower().replace(".", "")
-        file_type = "PNG图片" if input_extension == "webp" else "GIF动图"
-        
-        # 直接发送文件链接
-        response = f"表情包下载链接:\n{download_url}\n\n右键点击链接并选择'保存为...'来下载{file_type}"
-        edit_message(chat_id, processing_msg_id, response)
-        
-        # 更新处理消息，添加下载整套表情包的链接
-        set_name = sticker.get("set_name")
-        if set_name:
-            set_url = f"https://t.me/addstickers/{set_name}"
-            add_msg = f"\n\n要获取整个表情包，请访问:\n{set_url}"
-            edit_message(chat_id, processing_msg_id, response + add_msg)
+        try:
+            # 确定文件类型和输出格式
+            input_extension = os.path.splitext(file_path)[1].lower().replace(".", "")
+            if input_extension == "webp":
+                output_format = "png"
+            else:  # tgs 或其他格式
+                output_format = "gif"
+            
+            output_path = f"storage/tmp/convert_{uuid.uuid4().hex}.{output_format}"
+            
+            # 转换文件
+            success = False
+            if input_extension == "webp":
+                subprocess.run(["ffmpeg", "-y", "-i", local_file_path, output_path], check=True)
+                success = True
+            elif input_extension == "tgs":
+                success = convert_tgs_to_gif(local_file_path, output_path)
+            else:
+                subprocess.run(["ffmpeg", "-y", "-i", local_file_path, "-vf", "scale=-1:-1", "-r", "20", output_path], check=True)
+                success = True
+            
+            if success:
+                # 发送转换后的文件
+                send_document(chat_id, output_path, reply_to_message_id=message_id)
+                
+                # 添加下载整套表情包的选项
+                set_name = sticker.get("set_name")
+                if set_name:
+                    set_url = f"https://t.me/addstickers/{set_name}"
+                    response = "转换完成！\n\n要获取整个表情包，请访问:\n" + set_url
+                else:
+                    response = "转换完成！"
+                
+                edit_message(chat_id, processing_msg_id, response)
+            else:
+                edit_message(chat_id, processing_msg_id, "转换失败，请稍后重试。")
+            
+        finally:
+            # 清理临时文件
+            cleanup_files(local_file_path)
+            if 'output_path' in locals() and os.path.exists(output_path):
+                cleanup_files(output_path)
         
         return {"status": "success"}
+        
     except Exception as e:
         error_msg = f"处理表情包时发生错误: {str(e)}"
         edit_message(chat_id, processing_msg_id, error_msg)
@@ -713,4 +746,133 @@ def get_sticker_set(name):
     url = f"{API_URL}/getStickerSet"
     payload = {"name": name}
     response = requests.post(url, json=payload)
-    return response.json() 
+    return response.json()
+
+def convert_tgs_to_gif(input_path, output_path):
+    """将 TGS 文件转换为 GIF"""
+    try:
+        # 1. 解压缩 TGS 文件（TGS 是 gzip 压缩的 JSON）
+        with gzip.open(input_path, 'rb') as f:
+            json_data = f.read()
+        
+        # 2. 保存解压后的 JSON 文件
+        json_path = input_path + '.json'
+        with open(json_path, 'wb') as f:
+            f.write(json_data)
+        
+        try:
+            # 3. 使用 ImageMagick 转换为 GIF
+            # 首先尝试使用 lottie-convert.py（如果可用）
+            try:
+                subprocess.run([
+                    'lottie_convert.py',
+                    json_path,
+                    output_path
+                ], check=True)
+                os.remove(json_path)
+                return True
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                # 如果 lottie-convert.py 失败，尝试使用 ImageMagick
+                subprocess.run([
+                    'convert',
+                    '-delay', '3',  # 每帧延迟 3/100 秒
+                    '-loop', '0',   # 无限循环
+                    '-dispose', 'Background',  # 处理透明背景
+                    '-layers', 'optimize',     # 优化 GIF
+                    json_path,
+                    output_path
+                ], check=True)
+                os.remove(json_path)
+                return True
+                
+        except subprocess.CalledProcessError as e:
+            print(f"转换失败，尝试使用 ffmpeg: {str(e)}")
+            # 如果 ImageMagick 也失败，尝试使用 ffmpeg
+            try:
+                subprocess.run([
+                    'ffmpeg', '-y',
+                    '-i', input_path,
+                    '-vf', 'scale=200:200:force_original_aspect_ratio=decrease,pad=200:200:(ow-iw)/2:(oh-ih)/2:color=white@0.0',
+                    '-r', '30',
+                    output_path
+                ], check=True)
+                return True
+            except subprocess.CalledProcessError as e:
+                print(f"ffmpeg 转换也失败了: {str(e)}")
+                return False
+            
+    except Exception as e:
+        print(f"TGS 转换失败: {str(e)}")
+        return False
+
+# 处理表情包（贴纸）消息
+async def sticker_handler(update: Update, context: CallbackContext) -> None:
+    user = update.message.from_user
+    sticker = update.message.sticker
+    
+    print(f"[用户: {user.username}] 发送了贴纸：{sticker.file_id}")
+    sys.stdout.flush()
+    
+    processing_msg = await update.message.reply_text("正在处理表情包...")
+    
+    try:
+        file = await context.bot.get_file(sticker.file_id)
+        file_path = download_file(file.file_path, TOKEN)
+        
+        input_extension = os.path.splitext(file_path)[1].lower().replace(".", "")
+        
+        if input_extension == "webp":
+            output_format = "png"
+        else:  # tgs 或其他格式
+            output_format = "gif"
+        
+        output_path = f"storage/tmp/convert_{uuid.uuid4().hex}.{output_format}"
+        
+        success = False
+        if input_extension == "webp":
+            subprocess.run(["ffmpeg", "-y", "-i", file_path, output_path], check=True)
+            success = True
+        elif input_extension == "tgs":
+            success = convert_tgs_to_gif(file_path, output_path)
+        else:
+            subprocess.run(["ffmpeg", "-y", "-i", file_path, "-vf", "scale=-1:-1", "-r", "20", output_path], check=True)
+            success = True
+        
+        if success:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=open(output_path, 'rb'),
+                reply_to_message_id=update.message.message_id
+            )
+            
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("下载整个表情包", callback_data=f"download_set:{sticker.set_name}")]
+            ])
+            
+            await context.bot.edit_message_text(
+                chat_id=update.effective_chat.id,
+                message_id=processing_msg.message_id,
+                text="转换完成！",
+                reply_markup=keyboard
+            )
+        else:
+            await context.bot.edit_message_text(
+                chat_id=update.effective_chat.id,
+                message_id=processing_msg.message_id,
+                text="转换失败，请稍后重试。"
+            )
+        
+        # 清理文件
+        os.remove(file_path)
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        
+    except Exception as e:
+        error_msg = f"处理表情包时发生错误: {str(e)}"
+        print(f"[Bot] {error_msg}")
+        sys.stdout.flush()
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=processing_msg.message_id,
+            text=error_msg
+        ) 
