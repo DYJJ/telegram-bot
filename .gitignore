@@ -1,0 +1,24 @@
+# Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 分发和构建文件
+dist/
+build/
+*.egg-info/
+
+# 环境和IDE文件
+.env
+.env.local
+.venv
+env/
+venv/
+ENV/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 日志文件
+*.log 
