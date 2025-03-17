@@ -454,7 +454,9 @@ def process_callback_query(callback_query):
     # 处理表情包下载按钮点击
     if query_data and query_data.startswith("download_set:"):
         set_name = query_data.split(":")[1]
-        handle_download_sticker_set(chat_id, set_name, query_id, message)
+        # 直接提供添加贴纸集的链接
+        set_url = f"https://t.me/addstickers/{set_name}"
+        send_telegram_message(chat_id, f"请访问以下链接查看和添加完整表情包：\n{set_url}")
     
     # 应答回调查询
     answer_callback_query(query_id)
@@ -496,46 +498,23 @@ def handle_sticker_message(chat_id, sticker, message):
             edit_message(chat_id, processing_msg_id, "无法获取文件路径")
             return {"status": "error", "message": "No file_path in file info"}
         
-        # 下载文件
+        # 创建文件URL
         download_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
-        local_file_path = download_file(download_url)
         
-        # 确定输出格式
+        # 确定文件类型和说明
         input_extension = os.path.splitext(file_path)[1].lower().replace(".", "")
-        output_format = "png" if input_extension == "webp" else "gif"
-        output_path = f"storage/tmp/convert_{uuid.uuid4().hex}.{output_format}"
+        file_type = "PNG图片" if input_extension == "webp" else "GIF动图"
         
-        # 确保临时目录存在
-        os.makedirs("storage/tmp", exist_ok=True)
+        # 直接发送文件链接
+        response = f"表情包下载链接:\n{download_url}\n\n右键点击链接并选择'保存为...'来下载{file_type}"
+        edit_message(chat_id, processing_msg_id, response)
         
-        # 转换文件
-        convert_success = convert_sticker(local_file_path, output_path, input_extension)
-        if not convert_success:
-            edit_message(chat_id, processing_msg_id, "转换表情包失败")
-            return {"status": "error", "message": "Failed to convert sticker"}
-        
-        # 发送转换后的文件
-        send_document(chat_id, output_path, message_id)
-        
-        # 更新处理消息，添加下载整套表情包的按钮
+        # 更新处理消息，添加下载整套表情包的链接
         set_name = sticker.get("set_name")
         if set_name:
-            keyboard = {
-                "inline_keyboard": [
-                    [
-                        {
-                            "text": "下载整个表情包",
-                            "callback_data": f"download_set:{set_name}"
-                        }
-                    ]
-                ]
-            }
-            edit_message(chat_id, processing_msg_id, "转换完成！", reply_markup=keyboard)
-        else:
-            edit_message(chat_id, processing_msg_id, "转换完成！")
-        
-        # 清理文件
-        cleanup_files(local_file_path, output_path)
+            set_url = f"https://t.me/addstickers/{set_name}"
+            add_msg = f"\n\n要获取整个表情包，请访问:\n{set_url}"
+            edit_message(chat_id, processing_msg_id, response + add_msg)
         
         return {"status": "success"}
     except Exception as e:
