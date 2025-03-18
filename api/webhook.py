@@ -821,70 +821,95 @@ def get_sticker_set(name):
     return response.json()
 
 def convert_tgs_to_gif(input_path, output_path):
-    """将 TGS 文件转换为 GIF"""
+    """将 TGS 文件转换为 GIF，使用 lottie2gif 工具"""
     print(f"开始转换 TGS 文件: {input_path} -> {output_path}")
     print(f"检查输入文件是否存在: {os.path.exists(input_path)}")
     print(f"输入文件大小: {os.path.getsize(input_path) if os.path.exists(input_path) else 'file not found'} bytes")
     
     temp_files = []
     try:
-        # 1. 解压缩 TGS 文件
+        # 1. 解压缩 TGS 文件到 JSON
+        temp_json = tempfile.NamedTemporaryFile(suffix='.json', delete=False)
+        temp_files.append(temp_json.name)
+        temp_json.close()
+        
         try:
-            print("尝试解压缩 TGS 文件...")
-            temp_json = tempfile.NamedTemporaryFile(suffix='.json', delete=False)
-            temp_files.append(temp_json.name)
+            print("使用 gzip 解压缩 TGS 文件...")
+            # 使用系统命令解压，与 telegram-stickerimage-bot 相同的方式
+            cmd = f"gzip -dc '{input_path}' > '{temp_json.name}'"
+            process = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             
-            with gzip.open(input_path, 'rb') as f_in:
-                with open(temp_json.name, 'wb') as f_out:
-                    f_out.write(f_in.read())
+            if process.returncode != 0:
+                print(f"解压缩失败: {process.stderr}")
+                # 备选方案：使用 Python 的 gzip 模块
+                print("尝试使用 Python gzip 模块...")
+                with gzip.open(input_path, 'rb') as f_in:
+                    with open(temp_json.name, 'wb') as f_out:
+                        f_out.write(f_in.read())
             
-            print(f"解压缩成功，JSON 文件大小: {os.path.getsize(temp_json.name)} bytes")
+            print(f"解压缩成功，JSON 文件大小: {os.path.getsize(temp_json.name) if os.path.exists(temp_json.name) else 'file not found'} bytes")
         except Exception as e:
             print(f"TGS 解压缩失败: {str(e)}")
             return False
         
-        # 2. 尝试使用 ffmpeg 直接转换
+        # 2. 使用 lottie2gif 转换 JSON 到 GIF
         try:
-            print("尝试使用 ffmpeg 转换...")
-            subprocess.run([
-                'ffmpeg',
-                '-y',  # 覆盖输出文件
-                '-i', temp_json.name,  # 输入文件
-                '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=white@0.0',  # 缩放和填充
-                '-plays', '0',  # 无限循环
-                '-r', '30',  # 帧率
-                output_path
-            ], check=True, capture_output=True)
+            print("使用 lottie2gif 转换 JSON 到 GIF...")
+            # 检查是否有 lottie2gif 工具
+            lottie2gif_cmd = "lottie2gif"  # 假设 lottie2gif 在 PATH 中
+            conversion_cmd = f"{lottie2gif_cmd} -o '{output_path}' '{temp_json.name}'"
             
+            process = subprocess.run(conversion_cmd, shell=True, capture_output=True, text=True)
+            
+            if process.returncode != 0:
+                print(f"lottie2gif 转换失败: {process.stderr}")
+                
+                # 尝试使用 lottie_convert.py 作为备选方案
+                print("尝试使用 lottie_convert.py...")
+                subprocess.run(['lottie_convert.py', temp_json.name, output_path], check=True, capture_output=True)
+                
+                if not (os.path.exists(output_path) and os.path.getsize(output_path) > 0):
+                    # 如果还是失败，尝试 ffmpeg
+                    print("尝试使用 ffmpeg 转换...")
+                    subprocess.run([
+                        'ffmpeg',
+                        '-y',  # 覆盖输出文件
+                        '-i', temp_json.name,  # 输入文件
+                        '-vf', 'fps=30,scale=512:512:force_original_aspect_ratio=decrease',
+                        '-plays', '0',  # 无限循环
+                        output_path
+                    ], check=True, capture_output=True)
+            
+            # 检查输出文件是否生成
             if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                print("ffmpeg 转换成功")
+                print(f"转换成功: {output_path}")
+                print(f"输出文件大小: {os.path.getsize(output_path)} bytes")
                 return True
+            else:
+                print("转换似乎成功了，但输出文件不存在或为空")
+                return False
+                
         except Exception as e:
-            print(f"ffmpeg 转换失败: {str(e)}")
+            print(f"转换 JSON 到 GIF 失败: {str(e)}")
             
-            # 3. 如果 ffmpeg 失败，尝试使用 convert 命令
+            # 最后尝试使用 ImageMagick
             try:
-                print("尝试使用 convert 命令...")
+                print("尝试使用 ImageMagick...")
                 subprocess.run([
                     'convert',
-                    '-size', '512x512',
-                    'canvas:none',  # 创建透明背景
-                    '-gravity', 'center',  # 居中
-                    '-resize', '512x512',  # 调整大小
-                    '-extent', '512x512',  # 扩展画布
-                    temp_json.name,  # 输入文件
-                    '-set', 'dispose', 'background',  # 设置帧处理方式
-                    '-loop', '0',  # 无限循环
-                    '-delay', '3.33',  # 约30fps
+                    '-delay', '3.33',  # 约 30fps
+                    '-loop', '0',
+                    temp_json.name,
                     output_path
                 ], check=True, capture_output=True)
                 
                 if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                    print("convert 转换成功")
+                    print("使用 ImageMagick 转换成功")
                     return True
             except Exception as e:
-                print(f"convert 转换失败: {str(e)}")
+                print(f"ImageMagick 转换失败: {str(e)}")
                 return False
+                
     except Exception as e:
         print(f"转换过程中发生错误: {str(e)}")
         return False
