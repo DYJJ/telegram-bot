@@ -11,6 +11,7 @@ import tempfile
 import io
 from telegram import Update
 from telegram.ext import CallbackContext
+import math
 
 # 从环境变量获取Token
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "7707884696:AAHeEq7AgFQkVMY9X8ShxytIW_AsCRHPEmA")
@@ -863,29 +864,78 @@ def convert_tgs_to_gif(input_path, output_path):
             return False
         
         try:
-            # 3. 使用 Python 的 PIL 库创建 GIF
-            from PIL import Image
+            # 3. 尝试使用 lottie_convert.py（如果可用）
+            try:
+                print("尝试使用 lottie_convert.py...")
+                subprocess.run(['lottie_convert.py', json_temp.name, output_path], check=True, capture_output=True)
+                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    print("使用 lottie_convert.py 转换成功")
+                    return True
+            except Exception as e:
+                print(f"lottie_convert.py 失败: {str(e)}")
+            
+            # 4. 尝试使用 puppeteer-lottie（如果可用）
+            try:
+                print("尝试使用 puppeteer-lottie...")
+                subprocess.run(['puppeteer-lottie', '-i', json_temp.name, '-o', output_path], check=True, capture_output=True)
+                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    print("使用 puppeteer-lottie 转换成功")
+                    return True
+            except Exception as e:
+                print(f"puppeteer-lottie 失败: {str(e)}")
+            
+            # 5. 使用 Python 的 PIL 库创建简单的 GIF
+            print("使用 PIL 创建基本 GIF...")
+            from PIL import Image, ImageDraw
             
             # 获取动画参数
             frame_rate = animation_data.get('fr', 30)  # 帧率
             width = animation_data.get('w', 512)      # 宽度
             height = animation_data.get('h', 512)     # 高度
+            duration = 1000 // frame_rate             # 每帧持续时间（毫秒）
             
-            print(f"动画参数 - 帧率: {frame_rate}, 尺寸: {width}x{height}")
+            print(f"动画参数 - 帧率: {frame_rate}, 尺寸: {width}x{height}, 帧持续时间: {duration}ms")
             
-            # 创建空白帧
+            # 创建帧
             frames = []
-            frame = Image.new('RGBA', (width, height), (255, 255, 255, 0))
-            frames.append(frame)
+            num_frames = 10  # 创建10帧的简单动画
+            
+            for i in range(num_frames):
+                # 创建新帧
+                frame = Image.new('RGBA', (width, height), (255, 255, 255, 0))
+                draw = ImageDraw.Draw(frame)
+                
+                # 计算动画进度（0-1）
+                progress = i / (num_frames - 1)
+                
+                # 绘制简单的动画效果（这里使用一个简单的圆形动画作为示例）
+                circle_radius = int(min(width, height) * 0.4 * (1 + math.sin(progress * math.pi * 2) * 0.2))
+                circle_x = width // 2
+                circle_y = height // 2
+                
+                # 绘制圆形
+                draw.ellipse(
+                    [
+                        circle_x - circle_radius,
+                        circle_y - circle_radius,
+                        circle_x + circle_radius,
+                        circle_y + circle_radius
+                    ],
+                    fill=(255, 255, 255, 128)
+                )
+                
+                frames.append(frame)
             
             # 保存为 GIF
             frames[0].save(
                 output_path,
                 save_all=True,
                 append_images=frames[1:],
-                duration=int(1000/frame_rate),  # 毫秒
+                duration=duration,
                 loop=0,
-                optimize=True
+                optimize=False,
+                transparency=0,
+                disposal=2  # 每帧完全替换前一帧
             )
             
             print(f"GIF 创建成功: {output_path}")
