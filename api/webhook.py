@@ -822,115 +822,83 @@ def get_sticker_set(name):
 
 def convert_tgs_to_gif(input_path, output_path):
     """将 TGS 文件转换为 GIF"""
-    temp_files = []
     print(f"开始转换 TGS 文件: {input_path} -> {output_path}")
     print(f"检查输入文件是否存在: {os.path.exists(input_path)}")
     print(f"输入文件大小: {os.path.getsize(input_path) if os.path.exists(input_path) else 'file not found'} bytes")
     
+    temp_files = []
     try:
-        # 1. 解压缩 TGS 文件（TGS 是 gzip 压缩的 JSON）
+        # 1. 解压缩 TGS 文件
         try:
             print("尝试解压缩 TGS 文件...")
-            with gzip.open(input_path, 'rb') as f:
-                json_data = f.read()
-            print(f"成功读取 JSON 数据，大小: {len(json_data)} bytes")
+            temp_json = tempfile.NamedTemporaryFile(suffix='.json', delete=False)
+            temp_files.append(temp_json.name)
             
-            # 解析 JSON 数据
-            animation_data = json.loads(json_data)
-            print("JSON 数据解析成功")
+            with gzip.open(input_path, 'rb') as f_in:
+                with open(temp_json.name, 'wb') as f_out:
+                    f_out.write(f_in.read())
             
-            # 检查是否是有效的 Lottie 动画
-            if not isinstance(animation_data, dict) or 'v' not in animation_data:
-                print("无效的 Lottie 动画文件")
-                return False
-                
-            print(f"Lottie 动画版本: {animation_data.get('v')}")
-            
+            print(f"解压缩成功，JSON 文件大小: {os.path.getsize(temp_json.name)} bytes")
         except Exception as e:
-            print(f"TGS 解压缩或解析失败: {str(e)}")
+            print(f"TGS 解压缩失败: {str(e)}")
             return False
         
-        # 2. 保存解压后的 JSON 到临时文件
+        # 2. 尝试使用 ffmpeg 直接转换
         try:
-            print("创建临时 JSON 文件...")
-            json_temp = tempfile.NamedTemporaryFile(suffix='.json', delete=False)
-            json_temp.write(json_data)
-            json_temp.close()
-            temp_files.append(json_temp.name)
-            print(f"临时 JSON 文件创建成功: {json_temp.name}")
-            print(f"临时文件大小: {os.path.getsize(json_temp.name)} bytes")
+            print("尝试使用 ffmpeg 转换...")
+            subprocess.run([
+                'ffmpeg',
+                '-y',  # 覆盖输出文件
+                '-i', temp_json.name,  # 输入文件
+                '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=white@0.0',  # 缩放和填充
+                '-plays', '0',  # 无限循环
+                '-r', '30',  # 帧率
+                output_path
+            ], check=True, capture_output=True)
+            
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                print("ffmpeg 转换成功")
+                return True
         except Exception as e:
-            print(f"创建临时 JSON 文件失败: {str(e)}")
-            return False
-        
-        try:
-            # 3. 使用 ImageMagick 转换
+            print(f"ffmpeg 转换失败: {str(e)}")
+            
+            # 3. 如果 ffmpeg 失败，尝试使用 convert 命令
             try:
-                print("尝试使用 ImageMagick 转换...")
-                # 创建临时 PNG 序列目录
-                temp_dir = tempfile.mkdtemp()
-                temp_files.append(temp_dir)
-                
-                # 获取动画参数
-                frame_rate = animation_data.get('fr', 30)  # 帧率
-                width = animation_data.get('w', 512)      # 宽度
-                height = animation_data.get('h', 512)     # 高度
-                duration = 100 // frame_rate              # 每帧持续时间（1/100秒）
-                
-                # 创建一系列 PNG 帧
-                num_frames = 20  # 创建20帧动画
-                for i in range(num_frames):
-                    frame_path = os.path.join(temp_dir, f"frame_{i:03d}.png")
-                    progress = i / (num_frames - 1)
-                    
-                    # 使用 convert 命令创建帧
-                    subprocess.run([
-                        'convert',
-                        '-size', f'{width}x{height}',
-                        'xc:none',  # 创建透明背景
-                        '-fill', 'white',
-                        '-draw', f'circle {width//2},{height//2} {width//2},{height//2+int(height*0.4*abs(math.sin(progress*math.pi*2)))}',
-                        frame_path
-                    ], check=True)
-                
-                # 使用 convert 命令将 PNG 序列转换为 GIF
+                print("尝试使用 convert 命令...")
                 subprocess.run([
                     'convert',
-                    '-delay', str(duration),
-                    '-dispose', 'Background',
-                    '-loop', '0',
-                    os.path.join(temp_dir, 'frame_*.png'),
+                    '-size', '512x512',
+                    'canvas:none',  # 创建透明背景
+                    '-gravity', 'center',  # 居中
+                    '-resize', '512x512',  # 调整大小
+                    '-extent', '512x512',  # 扩展画布
+                    temp_json.name,  # 输入文件
+                    '-set', 'dispose', 'background',  # 设置帧处理方式
+                    '-loop', '0',  # 无限循环
+                    '-delay', '3.33',  # 约30fps
                     output_path
-                ], check=True)
+                ], check=True, capture_output=True)
                 
                 if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                    print("使用 ImageMagick 转换成功")
+                    print("convert 转换成功")
                     return True
-                    
             except Exception as e:
-                print(f"ImageMagick 转换失败: {str(e)}")
+                print(f"convert 转换失败: {str(e)}")
                 return False
-                
-        except Exception as e:
-            print(f"创建 GIF 失败: {str(e)}")
-            return False
-            
     except Exception as e:
-        print(f"TGS 转换过程中发生错误: {str(e)}")
+        print(f"转换过程中发生错误: {str(e)}")
         return False
     finally:
-        # 清理所有临时文件
+        # 清理临时文件
         for temp_file in temp_files:
             try:
                 if os.path.exists(temp_file):
-                    if os.path.isdir(temp_file):
-                        import shutil
-                        shutil.rmtree(temp_file)
-                    else:
-                        os.unlink(temp_file)
-                    print(f"清理临时文件/目录: {temp_file}")
+                    os.unlink(temp_file)
+                    print(f"清理临时文件: {temp_file}")
             except Exception as e:
                 print(f"清理临时文件失败: {str(e)}")
+    
+    return False
 
 # 处理表情包（贴纸）消息
 async def sticker_handler(update: Update, context: CallbackContext) -> None:
