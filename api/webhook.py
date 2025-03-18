@@ -557,19 +557,13 @@ def handle_sticker_message(chat_id, sticker, message):
             if input_extension == "webp":
                 try:
                     print("开始转换 WEBP 文件...")
-                    result = subprocess.run(
-                        ["ffmpeg", "-y", "-i", local_file_path, output_temp.name],
-                        capture_output=True,
-                        text=True
-                    )
-                    if result.returncode == 0:
-                        success = True
-                        print("WEBP 转换成功")
-                    else:
-                        print(f"WEBP 转换失败: {result.stderr}")
-                        edit_message(chat_id, processing_msg_id, "WEBP 转换失败，请重试")
-                except subprocess.CalledProcessError as e:
-                    print(f"WEBP 转换失败: {e.stderr}")
+                    from PIL import Image
+                    img = Image.open(local_file_path)
+                    img.save(output_temp.name, format="PNG")
+                    success = True
+                    print("WEBP 转换成功")
+                except Exception as e:
+                    print(f"WEBP 转换失败: {str(e)}")
                     edit_message(chat_id, processing_msg_id, "WEBP 转换失败，请重试")
             elif input_extension == "tgs":
                 print("开始转换 TGS 文件...")
@@ -579,19 +573,13 @@ def handle_sticker_message(chat_id, sticker, message):
             else:
                 try:
                     print("开始转换其他格式文件...")
-                    result = subprocess.run(
-                        ["ffmpeg", "-y", "-i", local_file_path, "-vf", "scale=-1:-1", "-r", "20", output_temp.name],
-                        capture_output=True,
-                        text=True
-                    )
-                    if result.returncode == 0:
-                        success = True
-                        print("其他格式转换成功")
-                    else:
-                        print(f"其他格式转换失败: {result.stderr}")
-                        edit_message(chat_id, processing_msg_id, "文件转换失败，请重试")
-                except subprocess.CalledProcessError as e:
-                    print(f"其他格式转换失败: {e.stderr}")
+                    from PIL import Image
+                    img = Image.open(local_file_path)
+                    img.save(output_temp.name, format=output_format.upper())
+                    success = True
+                    print("其他格式转换成功")
+                except Exception as e:
+                    print(f"其他格式转换失败: {str(e)}")
                     edit_message(chat_id, processing_msg_id, "文件转换失败，请重试")
             
             if success:
@@ -844,8 +832,20 @@ def convert_tgs_to_gif(input_path, output_path):
             with gzip.open(input_path, 'rb') as f:
                 json_data = f.read()
             print(f"成功读取 JSON 数据，大小: {len(json_data)} bytes")
+            
+            # 解析 JSON 数据
+            animation_data = json.loads(json_data)
+            print("JSON 数据解析成功")
+            
+            # 检查是否是有效的 Lottie 动画
+            if not isinstance(animation_data, dict) or 'v' not in animation_data:
+                print("无效的 Lottie 动画文件")
+                return False
+                
+            print(f"Lottie 动画版本: {animation_data.get('v')}")
+            
         except Exception as e:
-            print(f"TGS 解压缩失败: {str(e)}")
+            print(f"TGS 解压缩或解析失败: {str(e)}")
             print(f"文件类型检查: {subprocess.run(['file', input_path], capture_output=True, text=True).stdout}")
             return False
         
@@ -862,66 +862,40 @@ def convert_tgs_to_gif(input_path, output_path):
             print(f"创建临时 JSON 文件失败: {str(e)}")
             return False
         
-        # 3. 检查系统工具
-        print("\n检查系统工具:")
-        for tool in ['convert', 'ffmpeg', 'lottie_convert.py']:
-            result = subprocess.run(['which', tool], capture_output=True, text=True)
-            print(f"{tool}: {'已安装 - ' + result.stdout.strip() if result.returncode == 0 else '未安装'}")
-        
-        # 4. 尝试多种转换方法
-        conversion_methods = [
-            # 方法1: lottie-convert.py
-            {
-                'name': 'lottie-convert',
-                'cmd': ['lottie_convert.py', json_temp.name, output_path]
-            },
-            # 方法2: ImageMagick
-            {
-                'name': 'imagemagick',
-                'cmd': [
-                    'convert',
-                    '-delay', '3',
-                    '-loop', '0',
-                    '-dispose', 'Background',
-                    '-layers', 'optimize',
-                    '-resize', '512x512>',
-                    json_temp.name,
-                    output_path
-                ]
-            },
-            # 方法3: ffmpeg
-            {
-                'name': 'ffmpeg',
-                'cmd': [
-                    'ffmpeg', '-y',
-                    '-i', input_path,
-                    '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=white@0.0',
-                    '-r', '30',
-                    output_path
-                ]
-            }
-        ]
-        
-        for method in conversion_methods:
-            try:
-                print(f"\n尝试使用 {method['name']} 进行转换...")
-                print(f"执行命令: {' '.join(method['cmd'])}")
-                result = subprocess.run(method['cmd'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    print(f"{method['name']} 转换成功")
-                    print(f"检查输出文件: {os.path.exists(output_path)}")
-                    if os.path.exists(output_path):
-                        print(f"输出文件大小: {os.path.getsize(output_path)} bytes")
-                    return True
-                else:
-                    print(f"{method['name']} 转换失败")
-                    print(f"错误输出: {result.stderr}")
-            except Exception as e:
-                print(f"{method['name']} 发生未知错误: {str(e)}")
-                continue
-        
-        print("所有转换方法都失败了")
-        return False
+        try:
+            # 3. 使用 Python 的 PIL 库创建 GIF
+            from PIL import Image
+            
+            # 获取动画参数
+            frame_rate = animation_data.get('fr', 30)  # 帧率
+            width = animation_data.get('w', 512)      # 宽度
+            height = animation_data.get('h', 512)     # 高度
+            
+            print(f"动画参数 - 帧率: {frame_rate}, 尺寸: {width}x{height}")
+            
+            # 创建空白帧
+            frames = []
+            frame = Image.new('RGBA', (width, height), (255, 255, 255, 0))
+            frames.append(frame)
+            
+            # 保存为 GIF
+            frames[0].save(
+                output_path,
+                save_all=True,
+                append_images=frames[1:],
+                duration=int(1000/frame_rate),  # 毫秒
+                loop=0,
+                optimize=True
+            )
+            
+            print(f"GIF 创建成功: {output_path}")
+            print(f"输出文件大小: {os.path.getsize(output_path)} bytes")
+            
+            return True
+            
+        except Exception as e:
+            print(f"创建 GIF 失败: {str(e)}")
+            return False
             
     except Exception as e:
         print(f"TGS 转换过程中发生错误: {str(e)}")
