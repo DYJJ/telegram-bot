@@ -481,6 +481,8 @@ def answer_callback_query(query_id, text=""):
 # 处理贴纸消息
 def handle_sticker_message(chat_id, sticker, message):
     message_id = message.get("message_id")
+    print(f"\n开始处理新的表情包请求...")
+    print(f"表情包信息: {sticker}")
     
     # 发送处理中消息
     processing_msg = send_telegram_message(chat_id, "正在处理表情包...")
@@ -493,63 +495,107 @@ def handle_sticker_message(chat_id, sticker, message):
         # 获取贴纸文件信息
         file_id = sticker.get("file_id")
         if not file_id:
-            edit_message(chat_id, processing_msg_id, "无法获取表情包文件ID，请重试")
+            error_msg = "无法获取表情包文件ID，请重试"
+            print(error_msg)
+            edit_message(chat_id, processing_msg_id, error_msg)
             return {"status": "error", "message": "No file_id in sticker"}
         
         # 获取文件信息
+        print(f"获取文件信息: {file_id}")
         file_info = get_file_info(file_id)
+        print(f"文件信息响应: {file_info}")
+        
         if not file_info.get("ok"):
-            edit_message(chat_id, processing_msg_id, "获取文件信息失败，请重试")
+            error_msg = "获取文件信息失败，请重试"
+            print(error_msg)
+            edit_message(chat_id, processing_msg_id, error_msg)
             return {"status": "error", "message": "Failed to get file info"}
         
         file_path = file_info.get("result", {}).get("file_path")
         if not file_path:
-            edit_message(chat_id, processing_msg_id, "无法获取文件路径，请重试")
+            error_msg = "无法获取文件路径，请重试"
+            print(error_msg)
+            edit_message(chat_id, processing_msg_id, error_msg)
             return {"status": "error", "message": "No file_path in file info"}
         
         # 下载文件到临时目录
         try:
-            local_file_path = download_file(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}")
+            print(f"开始下载文件: {file_path}")
+            download_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+            print(f"下载 URL: {download_url}")
+            local_file_path = download_file(download_url)
             temp_files.append(local_file_path)
+            print(f"文件下载成功: {local_file_path}")
+            print(f"文件大小: {os.path.getsize(local_file_path) if os.path.exists(local_file_path) else 'file not found'} bytes")
             edit_message(chat_id, processing_msg_id, "文件已下载，正在转换...")
         except Exception as e:
-            edit_message(chat_id, processing_msg_id, f"下载文件失败: {str(e)}")
+            error_msg = f"下载文件失败: {str(e)}"
+            print(error_msg)
+            edit_message(chat_id, processing_msg_id, error_msg)
             return {"status": "error", "message": f"Failed to download file: {str(e)}"}
         
         try:
             # 确定文件类型和输出格式
             input_extension = os.path.splitext(file_path)[1].lower().replace(".", "")
+            print(f"输入文件扩展名: {input_extension}")
+            
             if input_extension == "webp":
                 output_format = "png"
             else:  # tgs 或其他格式
                 output_format = "gif"
             
+            print(f"输出格式: {output_format}")
+            
             # 创建临时输出文件
             output_temp = tempfile.NamedTemporaryFile(suffix=f'.{output_format}', delete=False)
             output_temp.close()
             temp_files.append(output_temp.name)
+            print(f"创建输出临时文件: {output_temp.name}")
             
             # 转换文件
             success = False
             if input_extension == "webp":
                 try:
-                    subprocess.run(["ffmpeg", "-y", "-i", local_file_path, output_temp.name], check=True, capture_output=True)
-                    success = True
+                    print("开始转换 WEBP 文件...")
+                    result = subprocess.run(
+                        ["ffmpeg", "-y", "-i", local_file_path, output_temp.name],
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        success = True
+                        print("WEBP 转换成功")
+                    else:
+                        print(f"WEBP 转换失败: {result.stderr}")
+                        edit_message(chat_id, processing_msg_id, "WEBP 转换失败，请重试")
                 except subprocess.CalledProcessError as e:
-                    print(f"WEBP 转换失败: {e.stderr.decode('utf-8', errors='ignore')}")
+                    print(f"WEBP 转换失败: {e.stderr}")
                     edit_message(chat_id, processing_msg_id, "WEBP 转换失败，请重试")
             elif input_extension == "tgs":
+                print("开始转换 TGS 文件...")
                 edit_message(chat_id, processing_msg_id, "正在转换 TGS 文件...")
                 success = convert_tgs_to_gif(local_file_path, output_temp.name)
+                print(f"TGS 转换结果: {'成功' if success else '失败'}")
             else:
                 try:
-                    subprocess.run(["ffmpeg", "-y", "-i", local_file_path, "-vf", "scale=-1:-1", "-r", "20", output_temp.name], check=True, capture_output=True)
-                    success = True
+                    print("开始转换其他格式文件...")
+                    result = subprocess.run(
+                        ["ffmpeg", "-y", "-i", local_file_path, "-vf", "scale=-1:-1", "-r", "20", output_temp.name],
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        success = True
+                        print("其他格式转换成功")
+                    else:
+                        print(f"其他格式转换失败: {result.stderr}")
+                        edit_message(chat_id, processing_msg_id, "文件转换失败，请重试")
                 except subprocess.CalledProcessError as e:
-                    print(f"其他格式转换失败: {e.stderr.decode('utf-8', errors='ignore')}")
+                    print(f"其他格式转换失败: {e.stderr}")
                     edit_message(chat_id, processing_msg_id, "文件转换失败，请重试")
             
             if success:
+                print("开始发送转换后的文件...")
                 # 发送转换后的文件
                 send_document(chat_id, output_temp.name, reply_to_message_id=message_id)
                 
@@ -562,14 +608,18 @@ def handle_sticker_message(chat_id, sticker, message):
                     response = "转换完成！"
                 
                 edit_message(chat_id, processing_msg_id, response)
+                print("处理完成")
             else:
-                edit_message(chat_id, processing_msg_id, "转换失败，请稍后重试。如果问题持续存在，请联系管理员。")
+                error_msg = "转换失败，请稍后重试。如果问题持续存在，请联系管理员。"
+                print(error_msg)
+                edit_message(chat_id, processing_msg_id, error_msg)
             
         finally:
             # 清理所有临时文件
             for temp_file in temp_files:
                 try:
                     if os.path.exists(temp_file):
+                        print(f"清理临时文件: {temp_file}")
                         os.unlink(temp_file)
                 except Exception as e:
                     print(f"清理临时文件失败: {str(e)}")
@@ -585,6 +635,7 @@ def handle_sticker_message(chat_id, sticker, message):
         for temp_file in temp_files:
             try:
                 if os.path.exists(temp_file):
+                    print(f"清理临时文件: {temp_file}")
                     os.unlink(temp_file)
             except Exception as e:
                 print(f"清理临时文件失败: {str(e)}")
@@ -782,22 +833,42 @@ def get_sticker_set(name):
 def convert_tgs_to_gif(input_path, output_path):
     """将 TGS 文件转换为 GIF"""
     temp_files = []
+    print(f"开始转换 TGS 文件: {input_path} -> {output_path}")
+    print(f"检查输入文件是否存在: {os.path.exists(input_path)}")
+    print(f"输入文件大小: {os.path.getsize(input_path) if os.path.exists(input_path) else 'file not found'} bytes")
+    
     try:
         # 1. 解压缩 TGS 文件（TGS 是 gzip 压缩的 JSON）
         try:
+            print("尝试解压缩 TGS 文件...")
             with gzip.open(input_path, 'rb') as f:
                 json_data = f.read()
+            print(f"成功读取 JSON 数据，大小: {len(json_data)} bytes")
         except Exception as e:
             print(f"TGS 解压缩失败: {str(e)}")
+            print(f"文件类型检查: {subprocess.run(['file', input_path], capture_output=True, text=True).stdout}")
             return False
         
         # 2. 保存解压后的 JSON 到临时文件
-        json_temp = tempfile.NamedTemporaryFile(suffix='.json', delete=False)
-        json_temp.write(json_data)
-        json_temp.close()
-        temp_files.append(json_temp.name)
+        try:
+            print("创建临时 JSON 文件...")
+            json_temp = tempfile.NamedTemporaryFile(suffix='.json', delete=False)
+            json_temp.write(json_data)
+            json_temp.close()
+            temp_files.append(json_temp.name)
+            print(f"临时 JSON 文件创建成功: {json_temp.name}")
+            print(f"临时文件大小: {os.path.getsize(json_temp.name)} bytes")
+        except Exception as e:
+            print(f"创建临时 JSON 文件失败: {str(e)}")
+            return False
         
-        # 3. 尝试多种转换方法
+        # 3. 检查系统工具
+        print("\n检查系统工具:")
+        for tool in ['convert', 'ffmpeg', 'lottie_convert.py']:
+            result = subprocess.run(['which', tool], capture_output=True, text=True)
+            print(f"{tool}: {'已安装 - ' + result.stdout.strip() if result.returncode == 0 else '未安装'}")
+        
+        # 4. 尝试多种转换方法
         conversion_methods = [
             # 方法1: lottie-convert.py
             {
@@ -833,14 +904,18 @@ def convert_tgs_to_gif(input_path, output_path):
         
         for method in conversion_methods:
             try:
-                print(f"尝试使用 {method['name']} 进行转换...")
-                subprocess.run(method['cmd'], check=True, capture_output=True)
-                print(f"{method['name']} 转换成功")
-                return True
-            except subprocess.CalledProcessError as e:
-                print(f"{method['name']} 转换失败: {str(e)}")
-                print(f"错误输出: {e.stderr.decode('utf-8', errors='ignore')}")
-                continue
+                print(f"\n尝试使用 {method['name']} 进行转换...")
+                print(f"执行命令: {' '.join(method['cmd'])}")
+                result = subprocess.run(method['cmd'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    print(f"{method['name']} 转换成功")
+                    print(f"检查输出文件: {os.path.exists(output_path)}")
+                    if os.path.exists(output_path):
+                        print(f"输出文件大小: {os.path.getsize(output_path)} bytes")
+                    return True
+                else:
+                    print(f"{method['name']} 转换失败")
+                    print(f"错误输出: {result.stderr}")
             except Exception as e:
                 print(f"{method['name']} 发生未知错误: {str(e)}")
                 continue
@@ -856,6 +931,7 @@ def convert_tgs_to_gif(input_path, output_path):
         for temp_file in temp_files:
             try:
                 if os.path.exists(temp_file):
+                    print(f"清理临时文件: {temp_file}")
                     os.unlink(temp_file)
             except Exception as e:
                 print(f"清理临时文件失败: {str(e)}")
