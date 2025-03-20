@@ -2,11 +2,25 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
 
 # 分发和构建文件
 dist/
 build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 *.egg-info/
+.installed.cfg
+*.egg
 
 # 环境和IDE文件
 .env
@@ -21,4 +35,40 @@ ENV/
 *.swo
 
 # 日志文件
-*.log 
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 单元测试和覆盖报告
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# 临时文件
+storage/tmp/*
+tmp/
+temp/
+temp.html
+
+# 编辑目录和文件
+*~
+
+# 项目特定
+get-pip.py
+笔记.txt
+
+# 其他不需要提交的文件和目录
+.DS_Store
+.AppleDouble
+.LSOverride
+node_modules/
+jspm_packages/
+.npm
+.node_repl_history 
