@@ -1,0 +1,34 @@
+{
+  "msg": {
+    "start": "Hallo!\nIch bin der StickerImage-Bot. Du kannst mir Sticker senden, und ich mache dir daraus eine ZIP-Datei mit den Bildern.\n\nVerfügbare Befehle:\n\n- /newpack - Starte ein neues Päckchen.\n- /finish - Lade die ZIP-Datei herunter. Füge 'png' hinzu, wenn du die Bilder als PNG-Dateien (mit transparentem Hintergrund) haben möchtest; andernfalls erhältst du JPGs (mit weißem Hintergrund). Außerdem kannst du die Größe der Bilder festlegen. Die maximale Größe beträgt 512 px.\n\nBeispiele: \"/finish 128\" wird dir die Bilder als JPGs in 128x128 Pixel senden. Mit \"/finish png 160\" bekommst du die Bilder mit transparentem Hintergrund als PNGs, in einer Größe von 160x160 Pixel.\n\n- /cancel - Abbrechen.\n\n- /lang - Die Sprache wechseln.\n\nBeispiel: '/lang' zeigt alle verfügbaren Sprachen an, '/lang en' wechselt die Sprache zu Englisch.",
+    "newpack": "OK, sende mir nun die Sticker (%max% max.).",
+    "saved": "Sticker wurde gespeichert. Du kannst noch maximal %remain% Sticker hinzufügen. Verwende /finish, um die Bilder herunterzuladen. Wenn du Hilfe benötigst, sende mir einen beliebigen Text.",
+    "downloading": "[1/4] Lade Bilder herunter...",
+    "converting": "[2/4] Konvertiere Bilder...",
+    "packaging": "[3/4] Verpacke Bilder...",
+    "sending": "[4/4] Sende ZIP-Datei. Dies kann je nach Anzahl der Bilder einige Zeit dauern. Bitte habe einen Moment Geduld!",
+    "nosticker": "Leider hast du keine Bilder in der Warteschlange. Entweder hast du mir noch keine Sticker geschickt oder der Bot wurde neu gestartet. Verwende /newpack für ein neues Päckchen.",
+    "taskexist": "Du arbeitest bereits an einem Päckchen. Schließe es mit /finish ab (für mehr Informationen sende mir einen beliebigen Text).",
+    "tasklocked": "Eine Aufgabe wird gerade ausgeführt. Bitte warte, bis sie abgeschlossen ist.",
+    "taskfull": "Du hast die maximale Anzahl an Bildern erreicht. Verwende /finish, um die Bilder herunterzuladen (für mehr Informationen sende mir einen beliebigen Text).",
+    "taskcancelled": "Das Erstellen des Päckchens wurde abgebrochen.",
+    "notask": "Momentan wird kein Päckchen erstellt. Möchtest du vielleicht ein Neues starten? Verwende /newpack.",
+    "duplicated_sticker": "Diesen Sticker hast du mir bereits geschickt.",
+    "error": "Oops! Ein Fehler ist aufgetreten.",
+    "errmsg": "Oops! Ein Fehler ist aufgetreten... \n\n%errcode%\n%errbody%\n\nMelde diesen Fehler bitte hier: https://github.com/phoenixlzx/telegram-stickerimage-bot/issues (meistens liegt der Fehler jedoch bei Telegram).\n\nDu kannst mit /cancel abbrechen und mit /newpack neu starten, wenn du möchtest.",
+    "language_change": "Du hast Deutsch ausgewählt.",
+    "language_available": "Verfügbare Sprachen: %languages%\n\nVerwende /lang, um eine Sprache auszuwählen. Beispiel: /lang de",
+    "get_set_info": "Sticker-Set-Informationen werden abgerufen. Bitte warte...",
+    "set_added_count": "%sticker_count% Sticker aus dem Sticker-Set hinzugefügt.",
+    "err_get_filelink": "Fehler beim Abrufen des Dateilinks für %fileId%. Überspringe...",
+    "invalid_set": "Fehler beim Abrufen der Informationen für %setName%.",
+    "convert_error": "Fehler beim Konvertieren des Bildes.",
+    "download_error": "Fehler beim Herunterladen des Bildes.",
+    "direct_task_started": "Sticker wird verarbeitet... \n\n  Tipp: Verwende /newpack, wenn du:\n    - mehrere Sticker auf einmal herunterladen möchtest,\n    - ein vollständiges Sticker-Set exportieren möchtest",
+    "unsupported_sticker_source": "%source% ist keine unterstützte Stickerquelle. Die unterstützten Stickerquellen findest du im Befehl /sources.",
+    "supported_sticker_sources": "Die folgenden Link-URLs sind unterstützte Stickerquellen für den Bot:\n\n%sources%\n\nHänge die Sticker-Set-ID an einen dieser Links an, damit der Bot ihn erkennen kann."
+  },
+  "app": {
+    "storagepathnotexist": "Speicherpfad existiert nicht, wird erstellt."
+  }
+}

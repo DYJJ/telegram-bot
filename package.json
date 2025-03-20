@@ -1,0 +1,15 @@
+{
+  "name": "original_robot",
+  "version": "1.0.0",
+  "description": "这是一个基于Python的Telegram机器人，可以响应用户消息并提供搜索功能。",
+  "main": "tgs_converter.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "puppeteer-core": "^24.4.0"
+  }
+}

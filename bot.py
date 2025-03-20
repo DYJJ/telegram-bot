@@ -70,6 +70,7 @@ def download_file(url, token=None):
     if token and "bot.telegram.org" in url:
         url = f"{url}?file_api={token}"
     
+    print(f"下载文件: {url}")
     response = requests.get(url, timeout=60)
     if response.status_code != 200:
         raise Exception(f"下载失败，状态码：{response.status_code}")
@@ -77,9 +78,25 @@ def download_file(url, token=None):
     # 创建临时目录（如果不存在）
     os.makedirs("storage/tmp", exist_ok=True)
     
-    # 生成随机文件名
-    file_name = f"storage/tmp/upload_{uuid.uuid4().hex}"
+    # 从URL获取文件扩展名
+    file_ext = os.path.splitext(url.split('/')[-1])[1]
+    if not file_ext:
+        # 如果URL没有扩展名，尝试从内容类型获取
+        content_type = response.headers.get('Content-Type', '')
+        if 'image/webp' in content_type:
+            file_ext = '.webp'
+        elif 'application/x-tgsticker' in content_type:
+            file_ext = '.tgs'
+        elif 'image/' in content_type:
+            file_ext = f".{content_type.split('/')[-1]}"
+        else:
+            # 默认扩展名
+            file_ext = ''
     
+    # 生成带扩展名的随机文件名
+    file_name = f"storage/tmp/upload_{uuid.uuid4().hex}{file_ext}"
+    
+    print(f"保存文件: {file_name}")
     with open(file_name, 'wb') as f:
         f.write(response.content)
     
@@ -115,16 +132,26 @@ async def sticker_handler(update: Update, context: CallbackContext) -> None:
         output_path = f"storage/tmp/convert_{uuid.uuid4().hex}.{output_format}"
         
         # 转换贴纸
+        success = False
         if input_extension == "webp":
             # 使用 ImageMagick 或 ffmpeg 转换 webp 到 png
             subprocess.run(["ffmpeg", "-y", "-i", file_path, output_path], check=True)
+            success = True
         elif input_extension == "tgs":
-            # TGS 文件需要特殊处理（通常为 Lottie 格式）
-            # 这里简化处理，实际中可能需要 lottie-to-gif 转换器
-            subprocess.run(["ffmpeg", "-y", "-i", file_path, "-vf", "scale=-1:-1", "-r", "20", output_path], check=True)
+            # 使用我们的转换函数
+            from api.webhook import convert_tgs_to_gif
+            success = convert_tgs_to_gif(file_path, output_path)
+            if not success:
+                await context.bot.edit_message_text(
+                    chat_id=update.effective_chat.id,
+                    message_id=processing_msg.message_id,
+                    text="表情包转换失败，可能是不支持的TGS格式。我们提供了一个简单的替代图片。如果需要原始图片，请联系管理员。"
+                )
+                return
         else:
             # 其他格式也用 ffmpeg 转换
             subprocess.run(["ffmpeg", "-y", "-i", file_path, "-vf", "scale=-1:-1", "-r", "20", output_path], check=True)
+            success = True
         
         # 发送转换后的文件
         await context.bot.send_document(
@@ -134,29 +161,23 @@ async def sticker_handler(update: Update, context: CallbackContext) -> None:
         )
         
         # 更新处理消息
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("下载整个表情包", callback_data=f"download_set:{sticker.set_name}")]
-        ])
-        
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=processing_msg.message_id,
-            text="转换完成！",
-            reply_markup=keyboard
+            text="处理完成！"
         )
         
-        # 清理文件
+        # 清理临时文件
         os.remove(file_path)
         os.remove(output_path)
         
     except Exception as e:
-        error_msg = f"处理表情包时发生错误: {str(e)}"
-        print(f"[Bot] {error_msg}")
-        sys.stdout.flush()
+        # 处理错误
+        print(f"处理贴纸时出错: {str(e)}")
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=processing_msg.message_id,
-            text=error_msg
+            text=f"处理失败: {str(e)}"
         )
 
 # 处理下载整个表情包的回调查询
@@ -211,12 +232,22 @@ async def download_sticker_set(update: Update, context: CallbackContext) -> None
                 output_path = f"{folder_path}/{sticker.file_unique_id}.{output_format}"
                 
                 # 转换贴纸
+                success = False
                 if input_extension == "webp":
                     subprocess.run(["ffmpeg", "-y", "-i", file_path, output_path], check=True)
+                    success = True
                 elif input_extension == "tgs":
-                    subprocess.run(["ffmpeg", "-y", "-i", file_path, "-vf", "scale=-1:-1", "-r", "20", output_path], check=True)
+                    from api.webhook import convert_tgs_to_gif
+                    success = convert_tgs_to_gif(file_path, output_path)
+                    if not success:
+                        print(f"处理表情包 {sticker.file_id} TGS转换失败")
+                        failed += 1
+                        # 清理原始文件
+                        os.remove(file_path)
+                        continue
                 else:
                     subprocess.run(["ffmpeg", "-y", "-i", file_path, "-vf", "scale=-1:-1", "-r", "20", output_path], check=True)
+                    success = True
                 
                 # 清理原始文件
                 os.remove(file_path)
@@ -282,16 +313,24 @@ async def download_sticker_set(update: Update, context: CallbackContext) -> None
 
 # 主程序
 def main():
+    # 创建应用程序实例
     app = Application.builder().token(TOKEN).build()
 
-    # 注册命令和消息处理器
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("search", search_command))  # 添加搜索命令处理器
-    app.add_handler(MessageHandler(filters.STICKER, sticker_handler))  # 处理贴纸消息
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))  # 处理所有文本消息
+    # 添加处理程序
+    app.add_handler(CommandHandler("start", start))  # /start 命令
+    app.add_handler(CommandHandler("search", search_command))  # /search 命令
+    
+    # 修复过滤器，使用filters.Sticker.ALL或实例化一个filters.Sticker()
+    app.add_handler(MessageHandler(filters.Sticker.ALL, sticker_handler))  # 处理贴纸消息
+    
+    # 处理回调查询
     app.add_handler(CallbackQueryHandler(download_sticker_set, pattern="^download_set:"))  # 添加回调查询处理器
-
-    # 启动机器人
+    
+    # 处理普通消息
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))  # 处理所有文本消息
+    
+    # 启动机器人（轮询模式）
+    print("机器人已启动！")
     app.run_polling()
 
 if __name__ == "__main__":
